@@ -1,4 +1,5 @@
 // 「pos-anchor 安全張力＋隨機停止 + 模組化」
+// src/mainModules.cpp
 #include <Arduino.h>
 static char logBuffer[100] = {0};
 
@@ -170,31 +171,10 @@ void updateRandomStopMode()
     speedFactor = 0.0f;
 }
 
-// ---- 協調約束常數與函式（全域）----
-constexpr int MAX_ENCODERa = 17000;
-constexpr int LIMIT_HIGHa = 12000; // x=17000 時，其他至少 12000
-constexpr int LIMIT_MIDa = 5000;   // x=8500  時，其他至少 5000
-constexpr float CURVE_K = 1.3f;    // 曲線係數
-inline int minOtherMotor(int x)
-{
-  float ratio = (float)x / (float)MAX_ENCODERa;
-  if (ratio < 0.0f)
-    ratio = 0.0f;
-  if (ratio > 1.0f)
-    ratio = 1.0f;
-
-  // 主曲線
-  float y = powf(ratio, CURVE_K) * LIMIT_HIGHa;
-
-  // 修正 8500→5000 對應
-  float correction = LIMIT_MIDa - (powf(0.5f, CURVE_K) * LIMIT_HIGHa);
-  y += correction * (1.0f - ratio);
-
-  return (int)y;
-}
-
 #include "modules/OSCManager.h"
 OSCManager osc;
+#include "modules/TensionSafety.h"
+TensionSafety tension;
 
 // 電容感測器設定
 #include <Wire.h>
@@ -309,15 +289,16 @@ void handleTouchDetection(unsigned long currentMillis, int approachThresh, int l
     event = "離開";
   }
 
-  if (event[0] || abs((long)capa - (long)lastPrintValue) > PRINT_THRESHOLD)
-  {
-    snprintf(logBuffer, sizeof(logBuffer), "[%s] capa: %5lu | diff: %+5ld | %s → LED %s\n",
-             modeStr, capa, diff,
-             event[0] ? event : "    ",
-             ledcRead(ledPwmChannel) ? "ON" : "OFF");
-    Serial.println(logBuffer);
-    lastPrintValue = capa;
-  }
+  // 智慧列印
+  //  if (event[0] || abs((long)capa - (long)lastPrintValue) > PRINT_THRESHOLD)
+  //  {
+  //    snprintf(logBuffer, sizeof(logBuffer), "[%s] capa: %5lu | diff: %+5ld | %s → LED %s\n",
+  //             modeStr, capa, diff,
+  //             event[0] ? event : "    ",
+  //             ledcRead(ledPwmChannel) ? "ON" : "OFF");
+  //    Serial.println(logBuffer);
+  //    lastPrintValue = capa;
+  //  }
 
   previousCapaClose = capa;
   lastReadTimeClose = currentMillis;
@@ -327,7 +308,7 @@ void setup()
 {
   Serial.begin(115200);
   osc.begin(); // WiFi + OSC 初始化
-
+  tension.begin();
   // 初始化電容感測器
   Wire.begin(21, 22); /* SDA=21, SCL=22 */
   // Wire.setClock(400000L);
@@ -386,9 +367,9 @@ void loop()
     stopTriggerTime = 0; // 可選：清零時間
   }
 
-  // 讀取電容值
   static unsigned long previousMillis = 0; // 上次讀取的時間
   unsigned long currentMillis = millis();  // 當前時間
+  // 讀取電容值
   if (currentMillis - previousMillis >= 40)
   {
     // capaRaw = capsense.getReading28(2); // Read CH2
@@ -396,69 +377,6 @@ void loop()
     // Serial.println(capaRaw);        // Output single value
     previousMillis = currentMillis; // 更新上次讀取時間
   }
-
-  // // 觸摸檢測
-  // static bool lastAnyMotion = false;
-  // static unsigned long lastAnyMotionChangeTime = 0; // 記錄 anyMotion 改變的時間
-  // static unsigned long lastReadTimeClose = 0;       // 上次讀取的時間
-  // static unsigned long lastReadTimeAway = 0;        // 上次讀取的時間
-  // // 靜止狀態檢測
-  // if (anyMotion == false && (currentMillis - lastAnyMotionChangeTime) >= 50)
-  // {
-  //   Serial.print("capaRaw: ");
-  //   Serial.print(capa);
-  //   if (currentMillis - lastReadTimeClose >= 40)
-  //   {
-  //     long diff = (long)capa - (long)previousCapaClose;
-  //     // Serial.print(" diff: ");
-  //     // Serial.print(diff);
-  //     if (diff < -200)
-  //     {
-  //       proxThresh = capa;
-  //       Serial.print(" 接近oooo ");
-  //       Serial.print(proxThresh);
-  //       ledcWrite(ledPwmChannel, 255);
-  //     }
-  //     previousCapaClose = capa;
-  //     lastReadTimeClose = currentMillis;
-  //   }
-  //   // if (currentMillis - lastReadTimeAway >= 80)
-  //   if (currentMillis - lastReadTimeAway >= 40)
-  //   {
-  //     if (capa - proxThresh >= 200)
-  //     {
-  //       Serial.println(" 離開xxxx ");
-  //       ledcWrite(ledPwmChannel, 0);
-  //     }
-  //     lastReadTimeAway = currentMillis;
-  //   }
-  //   Serial.println("");
-  // }
-  // // 移動狀態檢測
-  // else if (anyMotion == true && (currentMillis - lastAnyMotionChangeTime) >= 50)
-  // {
-  //   Serial.print("capaRaw: ");
-  //   Serial.print(capa);
-  //   if (currentMillis - lastReadTimeClose >= 40)
-  //   {
-  //     long diff = (long)capa - (long)previousCapaClose;
-  //     if (diff < -300)
-  //     {
-  //       proxThresh = capa;
-  //       Serial.print(" 移動接近proxThresh:");
-  //       Serial.print(proxThresh);
-  //       ledcWrite(ledPwmChannel, 255);
-  //     }
-  //     else if (capa - proxThresh > 300)
-  //     {
-  //       Serial.print(" 移動離開xxxx");
-  //       ledcWrite(ledPwmChannel, 0);
-  //     }
-  //     previousCapaClose = capa;
-  //     lastReadTimeClose = currentMillis;
-  //   }
-  //   Serial.println("");
-  // }
 
   // === 觸摸判斷主邏輯 ===
   if (anyMotion == false && (currentMillis - lastAnyMotionChangeTime) >= 50)
@@ -560,45 +478,7 @@ void loop()
 
   updateRandomStopMode();
 
-  // ===== 以「實際位置 pos」選主張力軸 + 遲滯 =====
-  static int lastMaster = 0;
-  const int MASTER_HYST = 1200; // 主軸切換遲滯，避免頻繁跳軸（可調 800~2000）
-  int posNow[3] = {posiArray[0], posiArray[1], posiArray[2]};
-
-  // 先找當前 pos 最大者
-  int cand = 0;
-  int gpos = posNow[0];
-  for (int i = 1; i < 3; ++i)
-    if (posNow[i] > gpos)
-    {
-      gpos = posNow[i];
-      cand = i;
-    }
-
-  // 遲滯：只有當 cand 比現任主軸高出一定幅度才換
-  int master = lastMaster;
-  if (cand != lastMaster && posNow[cand] > posNow[lastMaster] + MASTER_HYST)
-  {
-    master = cand;
-    // 可選：Serial.printf("🧭 master pos-switch %d→%d | pos=(%d,%d,%d)\n",
-    //                     lastMaster, master, posNow[0],posNow[1],posNow[2]);
-  }
-  lastMaster = master;
-
-  // ===== 用「實際張力錨」計 safeMin（避免被低 planned 拖低）=====
-  int anchor = max(planned[master], posNow[master]); // 關鍵：用 max(planned, pos)
-  int safeMin = (anchor >= 100) ? minOtherMotor(anchor) : 0;
-  // int safeMin = minOtherMotor(anchor);
-
-  // ===== 套用 safeMin 到其餘兩軸（一次性）=====
-  for (int j = 0; j < 3; ++j)
-  {
-    if (j == master)
-      continue;
-    if (planned[j] < safeMin)
-      planned[j] = safeMin;
-  }
-
+  tension.apply(planned, posiArray); // 張力安全調整
   // // ===== 全軸下跌限速（主軸稍嚴，其他也限一下）=====
   // const int DROP_MASTER = 600; // 每輪主軸最多下降量
   // const int DROP_OTHER = 500;  // 其他軸每輪最多下降量
@@ -625,15 +505,28 @@ void loop()
   //   lastDbg = millis();
   // }
 
+  static portMUX_TYPE encoder_mux = portMUX_INITIALIZER_UNLOCKED;
   for (int i = 0; i < 3; ++i)
   {
-    // 更新編碼器位置
-    int pos = encoders[i].getPosition();
+    int pos = 0;
+    // 🏆 最佳且高效的方案：暫時鎖住中斷
+    portENTER_CRITICAL(&encoder_mux);
+    pos = encoders[i].getPosition();
+    encoders[i].reset();
+    portEXIT_CRITICAL(&encoder_mux);
+    // 更新累積位置 (posiArray[i])
     if (pos != 0)
     {
       posiArray[i] += pos;
-      encoders[i].reset();
     }
+
+    // // 更新編碼器位置
+    // int pos = encoders[i].getPosition();
+    // if (pos != 0)
+    // {
+    //   posiArray[i] += pos;
+    //   encoders[i].reset();
+    // }
 
     // ========= motion判斷 =========
     static unsigned long lastMoveTime[3] = {0, 0, 0};

@@ -23,26 +23,26 @@ inline const IPAddress OSC_OUT_IP(192, 168, 1, 200);
 //     {17, 16, 5, 25, 26, 1},
 //     {2, 15, 4, 27, 14, 2}};
 
-// // 張力安全
+// 張力安全
 constexpr int MAX_ENCODER = 17000;
-// constexpr int LIMIT_HIGH = 12000;       // x=17000 時，其他至少 12000
-// constexpr int LIMIT_MID = 5000;         // x=8500  時，其他至少 5000
-// constexpr float TENSION_CURVE_K = 1.3f; // 曲線係數
-// constexpr int MASTER_HYSTERESIS = 1200; // 主軸切換遲滯，避免頻繁跳軸（可調 800~2000）
+constexpr int LIMIT_HIGH = 12000;       // x=17000 時，其他至少 12000
+constexpr int LIMIT_MID = 5000;         // x=8500  時，其他至少 5000
+constexpr float TENSION_CURVE_K = 1.3f; // 曲線係數
+                                        // constexpr int MASTER_HYSTERESIS = 1200; // 主軸切換遲滯，避免頻繁跳軸（可調 800~2000）
 
-// // 停止模式
-// constexpr int STOP_CHANCE = 5;              // 每次檢查有 5% 機率觸發
-// constexpr int CHECK_INTERVAL_MS = 3000;     // 每 3 秒檢查一次
-// constexpr int MIN_STOP_INTERVAL_MS = 10000; // 觸發後至少 10 秒不重複
-// constexpr int SLOW_DOWN_MS = 8000;
-// constexpr int STOP_DURATION_MS = 1500;
-// constexpr int SPEED_UP_MS = 8000;
+// 停止模式
+constexpr int STOP_CHANCE = 5;              // 每次檢查有 5% 機率觸發
+constexpr int CHECK_INTERVAL_MS = 3000;     // 每 3 秒檢查一次
+constexpr int MIN_STOP_INTERVAL_MS = 10000; // 觸發後至少 10 秒不重複
+constexpr int SLOW_DOWN_MS = 8000;
+constexpr int STOP_DURATION_MS = 1500;
+constexpr int SPEED_UP_MS = 8000;
 
-// // 隨機模式
-// constexpr int RANDOM_UPDATE_MIN_MS = 3000;  // 中心位置、速率變化最低更新秒數
-// constexpr int RANDOM_UPDATE_MAX_MS = 12000; // 中心位置、速率變化最高更新秒數
-// constexpr int RANDOM_WAVE_AMPLITUDE = 3000; // 中心位置上下振幅
-// constexpr int RANDOM_LERP_T = 5;            // 0.05慢 ~ 0.15快
+// 隨機模式
+constexpr int RANDOM_UPDATE_MIN_MS = 3000;  // 中心位置、速率變化最低更新秒數
+constexpr int RANDOM_UPDATE_MAX_MS = 12000; // 中心位置、速率變化最高更新秒數
+constexpr int RANDOM_WAVE_AMPLITUDE = 3000; // 中心位置上下振幅
+constexpr int RANDOM_LERP_T = 5;            // 0.05慢 ~ 0.15快
 
 // // 電容
 // constexpr int CAP_READ_INTERVAL_MS = 40;
