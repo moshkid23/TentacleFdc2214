@@ -64,117 +64,13 @@ int posiArray[3] = {0, 0, 0};   // 馬達當前位置
 int targetArray[3] = {0, 0, 0}; // 目標位置
 bool motion[3] = {0, 0, 0};     // 是否在運動
 bool anyMotion = false;
-static bool speedMorph[3] = {false, false, false};
-static bool morphUp[3] = {false, false, false}; // true=慢→快, false=快→慢
-static float morphFactor[3] = {1.0, 1.0, 1.0};  // 當前速度倍率
-
-// 全域變數（放在檔案頂端）
-enum StopModeState
-{
-  NORMAL,
-  SLOWING,
-  STOPPED,
-  RESUMING
-};
-StopModeState stopState = NORMAL;
-unsigned long stopTriggerTime = 0;
-float speedFactor = 1.0f;
-// === 停止模式可調參數（建議放在 constants.h）===
-constexpr int STOP_CHANCE_PER_CHECK = 5; // 每次檢查有 5% 機率觸發
-constexpr int CHECK_INTERVAL_MSa = 3000; // 每 3 秒檢查一次
-constexpr int MIN_INTERVAL_MS = 10000;   // 觸發後至少 10 秒不重複
-constexpr int SLOW_DOWN_MSa = 8000;
-constexpr int STOP_DURATION_MSa = 1500;
-constexpr int SPEED_UP_MSa = 8000;
-// 靜態變數：記錄上次檢查時間 & 上次觸發時間
-static unsigned long lastCheckTime = 0;
-static unsigned long lastTriggerTime = 0;
-void updateRandomStopMode()
-{
-  unsigned long now = millis();
-
-  // === 1. OSC 模式強制關閉停止效果 ===
-  if (!randomMode)
-  {
-    stopState = NORMAL;
-    speedFactor = 1.0f;
-    return;
-  }
-
-  // === 2. 僅在 NORMAL 狀態且到達檢查時間才檢查 ===
-  if (stopState == NORMAL && now - lastCheckTime >= CHECK_INTERVAL_MSa)
-  {
-    lastCheckTime = now;
-
-    // 檢查最小間隔
-    if (now - lastTriggerTime >= MIN_INTERVAL_MS && random(100) < STOP_CHANCE_PER_CHECK)
-    {
-      stopState = SLOWING;
-      stopTriggerTime = now;
-      lastTriggerTime = now;
-      Serial.println("Random STOP triggered!");
-    }
-  }
-
-  // === 3. 狀態機（不變）===
-  switch (stopState)
-  {
-  case NORMAL:
-    speedFactor = 1.0f;
-    break;
-
-  case SLOWING:
-  {
-    float t = (now - stopTriggerTime) / (float)SLOW_DOWN_MSa;
-    if (t >= 1.0f)
-    {
-      speedFactor = 0.0f;
-      stopState = STOPPED;
-      stopTriggerTime = now;
-    }
-    else
-    {
-      speedFactor = 1.0f - t; // 線性減速
-    }
-  }
-  break;
-
-  case STOPPED:
-    if (now - stopTriggerTime >= STOP_DURATION_MSa)
-    {
-      stopState = RESUMING;
-      stopTriggerTime = now;
-    }
-    speedFactor = 0.0f;
-    break;
-
-  case RESUMING:
-  {
-    float t = (now - stopTriggerTime) / (float)SPEED_UP_MSa;
-    if (t >= 1.0f)
-    {
-      speedFactor = 1.0f;
-      stopState = NORMAL;
-    }
-    else
-    {
-      speedFactor = t;
-    }
-  }
-  break;
-  }
-
-  // 強制限制
-  if (speedFactor > 1.0f)
-    speedFactor = 1.0f;
-  if (speedFactor < 0.0f)
-    speedFactor = 0.0f;
-}
 
 #include "modules/OSCManager.h"
 OSCManager osc;
 #include "modules/TensionSafety.h"
 TensionSafety tension;
+#include "modules/MotionAutomator.h"
+MotionAutomator autoMotion;
 
 // 電容感測器設定
 #include <Wire.h>
@@ -309,6 +205,8 @@ void setup()
   Serial.begin(115200);
   osc.begin(); // WiFi + OSC 初始化
   tension.begin();
+  autoMotion.begin();
+
   // 初始化電容感測器
   Wire.begin(21, 22); /* SDA=21, SCL=22 */
   // Wire.setClock(400000L);
@@ -361,10 +259,7 @@ void loop()
     Serial.printf("🌐 回到 OSC 模式，恢復目標 A=%d, B=%d, C=%d\n",
                   osc.getTarget(0), osc.getTarget(1), osc.getTarget(2));
 
-    // 新增：重置停止模式（立即恢復正常速度）
-    stopState = NORMAL;
-    speedFactor = 1.0f;
-    stopTriggerTime = 0; // 可選：清零時間
+    autoMotion.resetStopMode(); // 新增：重置停止模式（立即恢復正常速度）
   }
 
   static unsigned long previousMillis = 0; // 上次讀取的時間
@@ -390,93 +285,24 @@ void loop()
     handleTouchDetection(currentMillis, 300, 300); // 移動：接近 -300，離開 +300
   }
 
-  // ===== 隨機運動的持久狀態（所有階段都會用到）=====
-  static unsigned long nextUpdate[3] = {0, 0, 0};   // 每顆更新時機
-  static int randomCenter[3] = {8000, 8000, 8000};  // 隨機中心
-  static int randomSpeedLimit[3] = {150, 150, 150}; // 速度上限（馬達輸出區會用到）
-  static float sinePhase[3] = {0.0, 1.0, 2.0};
-  static float sineSpeed[3] = {0.0004, 0.0003, 0.0005};
-  // 速度變化變數
-  static unsigned long morphStartTime[3] = {0, 0, 0}; // 記錄開始時間
-  static unsigned long morphEndTime[3] = {0, 0, 0};   // 記錄結束時間
-  static float morphPhaseOffset[3] = {0.0, 0.0, 0.0};
-
   // ==== ✨ 階段1：先計算三顆的「下一步候選值 planned[]」(不直接動 targetArray) ====
   int planned[3];
-  {
-    unsigned long now = millis();
 
-    // 產生基準目標（random 或 OSC）
+  // 產生基準目標（random 或 OSC）
+
+  if (randomMode)
+  {
+    autoMotion.calculateTargets(planned, targetArray, currentMillis);
+  }
+  else
+  {
     for (int i = 0; i < 3; ++i)
     {
-      if (randomMode)
-      {
-        // 每顆馬達每 3~7 秒更新自己的 random 中心與速度層級
-        if (now > nextUpdate[i])
-        {
-          // 中心分區：大範圍 60%、小範圍 40%
-          int rangePick = random(100);
-          if (rangePick < 60)
-            randomCenter[i] = random(3000, 12000);
-          else
-            randomCenter[i] = random(3000, 4000);
-
-          // 速度層級：中速60%、慢速30%、快速10%
-          int speedPick = random(100);
-          if (speedPick < 60)
-            randomSpeedLimit[i] = random(30, 80);
-          else if (speedPick < 90)
-            randomSpeedLimit[i] = random(10, 30);
-          else
-            randomSpeedLimit[i] = random(80, 150);
-
-          // 是否進入速度變形（保留你原本的變速機制即可）
-          int morphPick = random(100);
-          if (morphPick < 5)
-          {
-            speedMorph[i] = true;
-            morphUp[i] = true;
-            morphFactor[i] = 0.3f;
-            morphStartTime[i] = millis();
-            morphEndTime[i] = 0;
-          }
-          else if (morphPick < 10)
-          {
-            speedMorph[i] = true;
-            morphUp[i] = false;
-            morphFactor[i] = 1.0f;
-            morphStartTime[i] = millis();
-            morphEndTime[i] = 0;
-          }
-          else
-          {
-            speedMorph[i] = false;
-          }
-
-          sineSpeed[i] = random(20, 60) / 100000.0f;
-          sinePhase[i] = random(0, 628) / 100.0f;
-          nextUpdate[i] = now + random(3000, 12000);
-        }
-
-        // 呼吸波
-        float wave = sin((millis() * sineSpeed[i]) + sinePhase[i]);
-        int waveOffset = (int)(wave * 3000); // ±3000 振幅
-        int target = constrain(randomCenter[i] + waveOffset, 0, 17000);
-
-        // LERP（隨機模式可稍快一點）
-        float t = 0.05f; // 0.05慢 ~ 0.15快
-        planned[i] = targetArray[i] + (int)((target - targetArray[i]) * t);
-      }
-      else
-      {
-        // OSC 直控 → 直接指向 oscTarget（或也可加輕微 LERP）
-        planned[i] = osc.getTarget(i); // 直接拿目標
-      }
-      planned[i] = constrain(planned[i], 0, 17000);
+      // OSC 直控 → 直接指向 oscTarget（或也可加輕微 LERP）
+      planned[i] = osc.getTarget(i); // 直接拿目標
     }
   }
-
-  updateRandomStopMode();
+  // planned[i] = constrain(planned[i], 0, 17000);
 
   tension.apply(planned, posiArray); // 張力安全調整
   // // ===== 全軸下跌限速（主軸稍嚴，其他也限一下）=====
@@ -555,67 +381,25 @@ void loop()
     int direction = statuses.D;
     int rawPower = statuses.P;
 
-    // ==== 速度漸變處理 (時間制 + sin 線性曲線 + 隨機長度 + 隨機相位) ====
-    if (speedMorph[i])
-    {
-      static unsigned long morphDuration[3] = {2000, 2000, 2000}; // 預設
-      if (morphEndTime[i] == 0)
-      {
-        morphDuration[i] = random(1500, 5000);        // 1.5s~5s
-        morphPhaseOffset[i] = random(0, 30) / 100.0f; // 0.0~0.3
-      }
-
-      unsigned long elapsed = millis() - morphStartTime[i];
-      float progress = (float)elapsed / (float)morphDuration[i];
-
-      if (progress >= 1.0f)
-      {
-        progress = 1.0f;
-        speedMorph[i] = false; // 🔚 自動結束 morph
-        morphEndTime[i] = millis();
-        // Serial.printf("✅ M%d morph 結束, 維持 %.1fs\n", i,
-        //               (morphEndTime[i] - morphStartTime[i]) / 1000.0f);
-      }
-
-      // 🎚️ 使用 sin 曲線讓變化更自然（ease-in / ease-out）
-      float phase = progress + morphPhaseOffset[i];
-      if (phase > 1.0f)
-        phase = 1.0f; // 避免超出
-      float eased = sin(phase * PI / 2.0f);
-
-      if (morphUp[i])
-      {
-        // 慢 → 快：從 0.3 緩升至 1.0
-        morphFactor[i] = 0.3f + 0.7f * eased;
-      }
-      else
-      {
-        // 快 → 慢：從 0.7 緩降至 0.2
-        morphFactor[i] = 0.7f - 0.6f * eased;
-      }
-    }
-    else
-    {
-      morphFactor[i] = 1.0f;
-    }
-
     if (randomMode)
     {
-      if (speedMorph[i])
+      float morphFactor = autoMotion.getMorphFactor(i);
+      int randomLimit = autoMotion.getRandomSpeedLimit(i);
+
+      if (autoMotion.isMorphing(i))
       {
-        // ✨ 當使用加速度變化時，不受 randomSpeedLimit 限制
-        // （但仍限制在 255 以防爆 PWM）
-        rawPower = constrain(rawPower * morphFactor[i], 0, 200);
+        // Morphing 期間，使用 morphFactor 限制速度
+        rawPower = (int)(rawPower * morphFactor);
       }
       else
       {
-        // 🧭 正常分層狀態：受限於 randomSpeedLimit
-        rawPower = constrain(rawPower, 0, randomSpeedLimit[i]);
+        // 非 Morphing 期間，使用隨機產生的速度限制 (randomLimit)
+        rawPower = constrain(rawPower, 0, randomLimit);
       }
     }
 
     // === 停止模式：乘 speedFactor（自動用當下功率作為起/終點）===
-    int finalPower = (int)(rawPower * speedFactor); // 這裡乘！
+    int finalPower = (int)(rawPower * autoMotion.getSpeedFactor()); // 這裡乘！
     finalPower = constrain(finalPower, 0, 255);
 
     // 移動馬達

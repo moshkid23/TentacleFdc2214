@@ -1,8 +1,9 @@
 // src/modules/MotionAutomator.cpp
 
 #include "MotionAutomator.h"
-#include <algorithm> // std::max, std::min
-#include <cmath>     // powf, sin, PI
+#include <algorithm>    // std::max, std::min
+#include <cmath>        // powf, sin, PI
+#include <esp_system.h> // 需要包含此標頭檔來獲取 TRNG
 
 // PI 在一些環境可能未定義，這裡手動定義，以確保 <cmath> 支援
 #ifndef PI
@@ -11,8 +12,9 @@
 
 void MotionAutomator::begin()
 {
-    // 初始化隨機數種子，使用 A0 作為隨機性來源
-    randomSeed(analogRead(0));
+    // 【✅ 修正方案：使用 ESP32 內建的硬體真隨機數生成器 (TRNG)】
+    // esp_random() 讀取 TRNG 輸出的 32-bit 真隨機數
+    randomSeed(esp_random());
 }
 
 /**
