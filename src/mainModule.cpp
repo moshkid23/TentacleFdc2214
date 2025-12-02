@@ -293,11 +293,7 @@ void loop()
   // 產生基準目標（random 或 OSC）
   if (randomMode)
   {
-    // 【✅ 修正：只呼叫一次目標計算】
     motionAuto.calculateTargets(planned, targetArray, now);
-
-    // ❌ 刪除：整個 for (int i = 0; i < 3; ++i) { ... } 區塊
-    // 該區塊的邏輯 (updateMorphFactor, rawPower 調整) 應屬於 PID 輸出階段。
   }
   else // OSC 模式
   {
@@ -308,11 +304,6 @@ void loop()
     }
   }
 
-  // ⚠️ 注意：如果所有 Constrain 都已在 MotionAutomator 內或 OSC 迴圈內完成，這裡可以省略。
-  // 由於 OSC 模式下的 Constrain 應該在 else 內部完成，這裡不再需要對所有馬達 Constrain。
-  // 為了安全，我們保留 OSC 模式下的 Constrain 如下：
-  // for (int i = 0; i < 3; ++i)
-  //   planned[i] = constrain(planned[i], 0, 17000);
   tension.apply(planned, posiArray); // 張力安全調整
   // // ===== 全軸下跌限速（主軸稍嚴，其他也限一下）=====
   // const int DROP_MASTER = 600; // 每輪主軸最多下降量
@@ -325,26 +316,16 @@ void loop()
   //   if (dj < -cap)
   //     planned[j] = prevT - cap;
   // }
-
   // ===== 最後寫回 targetArray =====
+
   for (int j = 0; j < 3; ++j)
     targetArray[j] = planned[j];
 
-  // // （可選）摘要監控
-  // static unsigned long lastDbg = 0;
-  // if (millis() - lastDbg > 200)
-  // {
-  //   Serial.printf("[ten] master=%d anchor=%d safeMin=%d | T=(%d,%d,%d) | pos=(%d,%d,%d)\n",
-  //                 master, anchor, safeMin, targetArray[0], targetArray[1], targetArray[2],
-  //                 posNow[0], posNow[1], posNow[2]);
-  //   lastDbg = millis();
-  // }
+  // 更新 Speed Morph 狀態
+  motionAuto.updateMorphFactor(now);
 
+  // ==== ✨ 階段2：根據 targetArray 更新馬達輸出 ====
   static portMUX_TYPE encoder_mux = portMUX_INITIALIZER_UNLOCKED;
-  unsigned long loopNow = millis();
-  // 【✅ 呼叫更新 Morphing 狀態和因子】
-  motionAuto.updateMorphFactor(loopNow);
-
   for (int i = 0; i < 3; ++i)
   {
     int pos = 0;
@@ -359,26 +340,18 @@ void loop()
       posiArray[i] += pos;
     }
 
-    // // 更新編碼器位置舊
-    // int pos = encoders[i].getPosition();
-    // if (pos != 0)
-    // {
-    //   posiArray[i] += pos;
-    //   encoders[i].reset();
-    // }
-
     // ========= motion判斷 =========
     static unsigned long lastMoveTime[3] = {0, 0, 0};
     if (pos != 0)
     {
       // 有動 → 更新「上次有動的時間」
-      lastMoveTime[i] = loopNow;
+      lastMoveTime[i] = now;
       motion[i] = true;
     }
     else
     {
       // 沒動 → 若距離上次動過超過 40ms 才判斷為靜止
-      if (loopNow - lastMoveTime[i] > 40)
+      if (now - lastMoveTime[i] > 40)
       {
         motion[i] = false;
       }
@@ -395,17 +368,14 @@ void loop()
 
     if (randomMode)
     {
-      // ⚠️ 這裡必須使用 MotionAutomator 提供的 speedMorph 狀態和 morphFactor
       if (motionAuto.isMorphing(i))
       {
-        // ✨ 當使用加速度變化時，不受 randomSpeedLimit 限制
-        // 【✅ 修改：使用 MotionAutomator 輸出的 morphFactor】
+        // 加速度變化狀態
         rawPower = constrain(rawPower * motionAuto.getMorphFactor(i), 0, 200);
       }
       else
       {
-        // 🧭 正常分層狀態：受限於 randomSpeedLimit
-        // 【✅ 修改：使用 MotionAutomator 輸出的 randomSpeedLimit】
+        // 正常分層狀態
         rawPower = constrain(rawPower, 0, motionAuto.getRandomSpeedLimit(i));
       }
     }

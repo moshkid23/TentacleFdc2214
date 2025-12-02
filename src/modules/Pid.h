@@ -1,26 +1,26 @@
+// src/modules/Pid.h
 #ifndef Pid_h
 #define Pid_h
-#include "Arduino.h" 
+#include "Arduino.h"
 
-class Pid {
+class Pid
+{
 public:
-
-  struct DiPo{
-  int D;
-  int P;
+  struct DiPo
+  {
+    int D;
+    int P;
   };
 
-//  DiPo s;
-  
+  //  DiPo s;
+
   Pid();
   DiPo DirAndPwr(int target, int posi, float kp, float ki, float kd);
-  
-private:
 
-//pid Variables
+private:
+  // pid Variables
   long prevT = 0;
   float eprev = 0;
   float eintegral = 0;
-
 };
 #endif

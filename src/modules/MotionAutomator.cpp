@@ -1,5 +1,4 @@
 // src/modules/MotionAutomator.cpp (實現停止模式邏輯)
-
 #include "MotionAutomator.h"
 #include <esp_system.h> // for esp_random()
 #include <algorithm>    // for std::max, std::min (雖然這個邏輯用 if/else 也可以，但建議保留)
@@ -9,6 +8,7 @@ void MotionAutomator::begin()
 {
     randomSeed(esp_random());
 }
+// stop mode
 void MotionAutomator::resetStopMode()
 {
     stopState = NORMAL;
@@ -30,7 +30,6 @@ void MotionAutomator::_updateRandomStopMode(unsigned long now)
             // Serial.println("Random STOP triggered!"); // 可選：遷移 log
         }
     }
-
     // === 2. 狀態機邏輯 (直接複製原 mainModules.cpp 的邏輯) ===
     switch (stopState)
     {
@@ -95,10 +94,7 @@ void MotionAutomator::updateState(bool isRandomMode, unsigned long now)
     _updateRandomStopMode(now);
 }
 
-/**
- * @brief 核心功能：計算隨機模式下的目標位置，並寫入 planned 陣列
- * 邏輯直接複製原 mainModules.cpp 的 Random Mode 區塊
- */
+// random mode
 void MotionAutomator::calculateTargets(int planned[3], const int currentTarget[3], unsigned long now)
 {
     for (int i = 0; i < 3; ++i)
@@ -106,31 +102,29 @@ void MotionAutomator::calculateTargets(int planned[3], const int currentTarget[3
         // 1. 更新隨機參數 (randomCenter, speedLimit, sine, Morphing 觸發)
         if (now > nextUpdate[i])
         {
-            // 中心分區 (原邏輯)
+            // 中心位置分區
             int rangePick = random(100);
-            if (rangePick < 60)
-                randomCenter[i] = random(3000, 12000);
+            if (rangePick > 60)
+                randomCenter[i] = random(6000, 12000);
             else
-                randomCenter[i] = random(3000, 4000);
+                randomCenter[i] = random(3000, 6000);
 
-            // 速度層級 (原邏輯)
+            // 速度層級
             int speedPick = random(100);
-            if (speedPick < 60)
+            if (speedPick < 60) // 60% 中速
                 randomSpeedLimit[i] = random(30, 80);
-            else if (speedPick < 90)
+            else if (speedPick < 90) // 30% 慢速
                 randomSpeedLimit[i] = random(10, 30);
-            else
+            else // 10% 快速
                 randomSpeedLimit[i] = random(80, 150);
 
-            // 【✅ 新增：Morphing 觸發邏輯 (從 mainModules.cpp 搬過來)】
+            // Morphing 觸發邏輯
             int morphPick = random(100);
             if (morphPick < 5)
             {
                 speedMorph[i] = true;
                 morphUp[i] = true;
                 morphFactor[i] = 0.3f; // 起始值
-                // ⚠️ 注意：morphStartTime[i], morphEndTime[i] 還在 mainModules.cpp
-                // 所以我們不能在這裡更新它們！
             }
             else if (morphPick < 10)
             {
@@ -142,19 +136,19 @@ void MotionAutomator::calculateTargets(int planned[3], const int currentTarget[3
             {
                 speedMorph[i] = false;
             }
-            // ---------------------------------------------
 
+            // 更新正弦波參數
             sineSpeed[i] = random(20, 60) / 100000.0f;
             sinePhase[i] = random(0, 628) / 100.0f;
             nextUpdate[i] = now + random(RANDOM_UPDATE_MIN_MS, RANDOM_UPDATE_MAX_MS);
         }
 
-        // 2. 呼吸波計算目標 (原邏輯)
+        // 2. 呼吸波計算目標
         float wave = sin((now * sineSpeed[i]) + sinePhase[i]);
         int waveOffset = (int)(wave * RANDOM_WAVE_AMPLITUDE);
         int target = constrain(randomCenter[i] + waveOffset, 0, MAX_ENCODER);
 
-        // 3. LERP 平滑目標 (原邏輯)
+        // 3. LERP 平滑目標
         float t = RANDOM_LERP_T / 100.0f;
         planned[i] = currentTarget[i] + (int)((target - currentTarget[i]) * t);
 
@@ -163,14 +157,14 @@ void MotionAutomator::calculateTargets(int planned[3], const int currentTarget[3
     }
 }
 
+// speed morph
 void MotionAutomator::updateMorphFactor(unsigned long now)
 {
     for (int i = 0; i < 3; ++i)
     {
-        // 1. 檢查是否處於 Morphing 狀態
         if (speedMorph[i])
         {
-            // 2. 檢查是否是 Morphing 剛觸發（在 calculateTargets 之後）
+            // 檢查是否是 Morphing 剛觸發（在 calculateTargets 之後）
             if (morphStartTime[i] == 0)
             {
                 // 由於 Morphing 狀態已在 calculateTargets 中設置為 true，現在開始計時
@@ -190,11 +184,15 @@ void MotionAutomator::updateMorphFactor(unsigned long now)
                 // Serial.printf("✅ M%d morph 結束\n", i);
             }
 
-            // 🎚️ 使用 sin 曲線讓變化更自然（ease-in / ease-out）
+            // 使用 sin 曲線讓變化更自然（ease-in / ease-out）
             float phase = progress + morphPhaseOffset[i];
             if (phase > 1.0f)
                 phase = 1.0f;                       // 避免超出
-            float eased = sin(phase * M_PI / 2.0f); // 注意：Arduino 中通常是 M_PI 而非 PI
+            float eased = sin(phase * M_PI / 2.0f); // M_PI = π (0~1 之間的 sin 曲線)
+                                                    // 0 ~ π/2 = 0 ~ 1
+                                                    // π/2 ~ π = 1 ~ 0
+                                                    // π ~ 3π/2 = 0 ~ -1
+                                                    // 3π/2 ~ 2π = -1 ~ 0
 
             if (morphUp[i])
             {

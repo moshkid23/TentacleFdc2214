@@ -39,10 +39,10 @@ constexpr int STOP_DURATION_MS = 1500;
 constexpr int SPEED_UP_MS = 8000;
 
 // 隨機模式
-constexpr int RANDOM_UPDATE_MIN_MS = 3000;  // 中心位置、速率變化最低更新秒數
-constexpr int RANDOM_UPDATE_MAX_MS = 12000; // 中心位置、速率變化最高更新秒數
+constexpr int RANDOM_UPDATE_MIN_MS = 3000;  // 速率變化最低更新秒數
+constexpr int RANDOM_UPDATE_MAX_MS = 12000; // 速率變化最高更新秒數
 constexpr int RANDOM_WAVE_AMPLITUDE = 3000; // 中心位置上下振幅
-constexpr int RANDOM_LERP_T = 5;            // 0.05慢 ~ 0.15快
+constexpr int RANDOM_LERP_T = 5;            // 5/100 = 0.05慢。0.15更快
 
 // // 電容
 // constexpr int CAP_READ_INTERVAL_MS = 40;
