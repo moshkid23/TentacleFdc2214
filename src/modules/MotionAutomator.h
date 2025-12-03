@@ -16,7 +16,7 @@ class MotionAutomator
 public:
     void begin();
     // stop mode
-    void updateState(bool isRandomMode, unsigned long now);
+    void updateRandomStopMode(unsigned long now);
     void resetStopMode();
     float getSpeedFactor() const { return speedFactor; }
 
@@ -28,6 +28,9 @@ public:
     bool isMorphing(int i) const { return speedMorph[i]; }
     float getMorphFactor(int i) const { return morphFactor[i]; }
     void updateMorphFactor(unsigned long now);
+    void resetMorphFactor();
+
+    void resetAllRandomEffects();
 
 private:
     // stop mode
@@ -36,7 +39,6 @@ private:
     float speedFactor = 1.0f; // 停止模式輸出的最終速度倍率
     unsigned long lastCheckTime = 0;
     unsigned long lastTriggerTime = 0;
-    void _updateRandomStopMode(unsigned long now);
 
     // random mode
     unsigned long nextUpdate[3] = {0, 0, 0};

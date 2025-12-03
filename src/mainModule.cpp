@@ -244,9 +244,8 @@ void setup()
 
 void loop()
 {
-  osc.update(); // 接收 OSC
-  // 按鈕更新
-  button.loop();
+  osc.update();  // 接收 OSC
+  button.loop(); // 按鈕更新
   if (button.isPressed())
   {
     randomMode = true; //
@@ -257,9 +256,6 @@ void loop()
     randomMode = false;
     Serial.printf("🌐 回到 OSC 模式，恢復目標 A=%d, B=%d, C=%d\n",
                   osc.getTarget(0), osc.getTarget(1), osc.getTarget(2));
-
-    // 新增：重置停止模式（立即恢復正常速度）
-    motionAuto.resetStopMode();
   }
 
   static unsigned long previousMillis = 0; // 上次讀取的時間
@@ -272,7 +268,6 @@ void loop()
     // Serial.println(capaRaw);        // Output single value
     previousMillis = currentMillis; // 更新上次讀取時間
   }
-
   // === 觸摸判斷主邏輯 ===
   if (anyMotion == false && (currentMillis - lastAnyMotionChangeTime) >= 50)
   {
@@ -287,49 +282,33 @@ void loop()
 
   // ==== ✨ 階段1：先計算三顆的「下一步候選值 planned[]」(不直接動 targetArray) ====
   int planned[3];
-
   unsigned long now = millis();
-  motionAuto.updateState(randomMode, now);
-  // 產生基準目標（random 或 OSC）
-  if (randomMode)
+  if (randomMode) // 自動模式
   {
-    motionAuto.calculateTargets(planned, targetArray, now);
+    motionAuto.calculateTargets(planned, targetArray, now); // 計算下一步候選值
+    motionAuto.updateMorphFactor(now);                      // 加速度變化更新
+    motionAuto.updateRandomStopMode(now);                   // 隨機停止模式更新
   }
   else // OSC 模式
   {
+    motionAuto.resetAllRandomEffects();
     for (int i = 0; i < 3; ++i)
     {
       planned[i] = osc.getTarget(i);
       planned[i] = constrain(planned[i], 0, 17000);
     }
   }
-
   tension.apply(planned, posiArray); // 張力安全調整
-  // // ===== 全軸下跌限速（主軸稍嚴，其他也限一下）=====
-  // const int DROP_MASTER = 600; // 每輪主軸最多下降量
-  // const int DROP_OTHER = 500;  // 其他軸每輪最多下降量
-  // for (int j = 0; j < 3; ++j)
-  // {
-  //   int prevT = targetArray[j];
-  //   int dj = planned[j] - prevT;
-  //   int cap = (j == master) ? DROP_MASTER : DROP_OTHER;
-  //   if (dj < -cap)
-  //     planned[j] = prevT - cap;
-  // }
-  // ===== 最後寫回 targetArray =====
 
   for (int j = 0; j < 3; ++j)
     targetArray[j] = planned[j];
-
-  // 更新 Speed Morph 狀態
-  motionAuto.updateMorphFactor(now);
 
   // ==== ✨ 階段2：根據 targetArray 更新馬達輸出 ====
   static portMUX_TYPE encoder_mux = portMUX_INITIALIZER_UNLOCKED;
   for (int i = 0; i < 3; ++i)
   {
     int pos = 0;
-    // 🏆 最佳且高效的方案：暫時鎖住中斷
+    // 最佳且高效的方案：暫時鎖住中斷
     portENTER_CRITICAL(&encoder_mux);
     pos = encoders[i].getPosition();
     encoders[i].reset();

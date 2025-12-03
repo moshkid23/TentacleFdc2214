@@ -44,7 +44,7 @@ int TensionSafety::calculateSafeMin(int masterPos) const
 
     // 計算主曲線 (y = ratio^K * LIMIT_HIGH)
     float y = powf(ratio, TENSION_CURVE_K) * LIMIT_HIGH;
-    
+
     // 計算並套用修正項，使曲線通過 (0.5 * MAX_ENCODER, LIMIT_MID)
     float correction = LIMIT_MID - (powf(0.5f, TENSION_CURVE_K) * LIMIT_HIGH);
     y += correction * (1.0f - ratio);
@@ -60,7 +60,7 @@ int TensionSafety::calculateSafeMin(int masterPos) const
 void TensionSafety::apply(int planned[3], const int currentPos[3])
 {
     // 1. 找出潛在的主軸 (Candidate Master)，即實際位置最高者
-    int cand = findMasterMotor(currentPos); 
+    int cand = findMasterMotor(currentPos);
 
     // 2. 應用主軸切換遲滯：
     // 只有當潛在主軸比現任主軸高出 HYSTERESIS 幅度時才換
@@ -71,13 +71,13 @@ void TensionSafety::apply(int planned[3], const int currentPos[3])
         // 可選：Serial.printf("🧭 master pos-switch %d→%d\n", lastMaster, master);
     }
     // 更新現任主軸
-    lastMaster = master; 
+    lastMaster = master;
 
     // 3. 計算錨定位置 (Anchor)：主軸的目標或實際位置，取兩者中較高的，避免主軸目標太低
     int anchor = std::max(planned[master], currentPos[master]);
-    
+
     // 4. 計算安全下限
-    int safeMin = calculateSafeMin(anchor); 
+    int safeMin = calculateSafeMin(anchor);
 
     // 5. 套用安全下限：對非主軸的目標位置應用 safeMin
     for (int i = 0; i < 3; ++i)
@@ -89,3 +89,16 @@ void TensionSafety::apply(int planned[3], const int currentPos[3])
         }
     }
 }
+
+// // ===== 全軸下跌限速（主軸稍嚴，其他也限一下）=====
+// const int DROP_MASTER = 600; // 每輪主軸最多下降量
+// const int DROP_OTHER = 500;  // 其他軸每輪最多下降量
+// for (int j = 0; j < 3; ++j)
+// {
+//   int prevT = targetArray[j];
+//   int dj = planned[j] - prevT;
+//   int cap = (j == master) ? DROP_MASTER : DROP_OTHER;
+//   if (dj < -cap)
+//     planned[j] = prevT - cap;
+// }
+// ===== 最後寫回 targetArray =====

@@ -15,7 +15,7 @@ void MotionAutomator::resetStopMode()
     speedFactor = 1.0f;
     stopTriggerTime = 0;
 }
-void MotionAutomator::_updateRandomStopMode(unsigned long now)
+void MotionAutomator::updateRandomStopMode(unsigned long now)
 {
     // === 1. 僅在 NORMAL 狀態且到達檢查時間才檢查 ===
     if (stopState == NORMAL && now - lastCheckTime >= CHECK_INTERVAL_MS)
@@ -81,18 +81,6 @@ void MotionAutomator::_updateRandomStopMode(unsigned long now)
     // 強制限制速度因數在 [0.0, 1.0] 之間
     speedFactor = std::max(0.0f, std::min(speedFactor, 1.0f));
 }
-void MotionAutomator::updateState(bool isRandomMode, unsigned long now)
-{
-    // === 1. OSC 模式強制關閉停止效果 (這是 mainModules 原有的邏輯) ===
-    if (!isRandomMode)
-    {
-        resetStopMode();
-        return;
-    }
-
-    // === 2. 運行隨機停止狀態機 ===
-    _updateRandomStopMode(now);
-}
 
 // random mode
 void MotionAutomator::calculateTargets(int planned[3], const int currentTarget[3], unsigned long now)
@@ -124,13 +112,11 @@ void MotionAutomator::calculateTargets(int planned[3], const int currentTarget[3
             {
                 speedMorph[i] = true;
                 morphUp[i] = true;
-                morphFactor[i] = 0.3f; // 起始值
             }
-            else if (morphPick < 10)
+            else if (morphPick < 20)
             {
                 speedMorph[i] = true;
                 morphUp[i] = false;
-                morphFactor[i] = 1.0f; // 起始值
             }
             else
             {
@@ -212,4 +198,18 @@ void MotionAutomator::updateMorphFactor(unsigned long now)
             morphStartTime[i] = 0; // 確保非 Morphing 狀態下計時器為 0
         }
     }
+}
+void MotionAutomator::resetMorphFactor()
+{
+    // 強制將所有 MorphFactor 設為 1.0f (全速)
+    for (int i = 0; i < 3; ++i)
+    {
+        morphFactor[i] = 1.0f;
+    }
+}
+
+void MotionAutomator::resetAllRandomEffects()
+{
+    resetStopMode();    // 將 stopState 設為 NORMAL, speedFactor = 1.0f
+    resetMorphFactor(); // (如果您採用了這個) 或手動將 morphFactor 設為 1.0f
 }
