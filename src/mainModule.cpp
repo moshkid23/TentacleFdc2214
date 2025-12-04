@@ -60,10 +60,7 @@ void IRAM_ATTR interrupt3() { encoders[2].tick(); }
 Pid motors[3];
 float kp = 1.0, ki = 0.0, kd = 0.0;
 // 馬達狀態變數
-int posiArray[3] = {0, 0, 0};   // 馬達當前位置
 int targetArray[3] = {0, 0, 0}; // 目標位置
-bool motion[3] = {0, 0, 0};     // 是否在運動
-bool anyMotion = false;
 
 #include "modules/OSCManager.h"
 OSCManager osc;
@@ -71,6 +68,8 @@ OSCManager osc;
 TensionSafety tension;
 #include "modules/MotionAutomator.h"
 MotionAutomator motionAuto;
+#include "modules/MotorMonitor.h"
+MotorMonitor motorMonitor;
 
 // 電容感測器設定
 #include <Wire.h>
@@ -254,6 +253,7 @@ void loop()
   else if (button.isReleased())
   {
     randomMode = false;
+    motionAuto.resetAllRandomEffects();
     Serial.printf("🌐 回到 OSC 模式，恢復目標 A=%d, B=%d, C=%d\n",
                   osc.getTarget(0), osc.getTarget(1), osc.getTarget(2));
   }
@@ -269,12 +269,13 @@ void loop()
     previousMillis = currentMillis; // 更新上次讀取時間
   }
   // === 觸摸判斷主邏輯 ===
-  if (anyMotion == false && (currentMillis - lastAnyMotionChangeTime) >= 50)
+  MotionStatus status = motorMonitor.getMotionStatus();
+  if (status.isAnyMotion == false && (currentMillis - status.lastChangeTime) >= 50)
   {
     modeStr = "STATIC";
     handleTouchDetection(currentMillis, 200, 200); // 靜止：接近 -200，離開 +200
   }
-  else if (anyMotion == true && (currentMillis - lastAnyMotionChangeTime) >= 50)
+  else if (status.isAnyMotion == true && (currentMillis - status.lastChangeTime) >= 50)
   {
     modeStr = "MOVING";
     handleTouchDetection(currentMillis, 300, 300); // 移動：接近 -300，離開 +300
@@ -291,57 +292,32 @@ void loop()
   }
   else // OSC 模式
   {
-    motionAuto.resetAllRandomEffects();
+    // motionAuto.resetAllRandomEffects();
     for (int i = 0; i < 3; ++i)
     {
       planned[i] = osc.getTarget(i);
       planned[i] = constrain(planned[i], 0, 17000);
     }
   }
-  tension.apply(planned, posiArray); // 張力安全調整
 
-  for (int j = 0; j < 3; ++j)
+  motorMonitor.update(encoders, now); // 讀取 Encoder 和判斷 Motion
+
+  // 獲取 Monitor 內最新的累積位置
+  int currentPosiArray[3];
+  for (int i = 0; i < 3; ++i)
+  {
+    currentPosiArray[i] = motorMonitor.getPosi(i);
+  }
+
+  tension.apply(planned, currentPosiArray); // 張力安全調整
+
+  for (int j = 0; j < 3; ++j) // 計算後更新目標位置
     targetArray[j] = planned[j];
 
   // ==== ✨ 階段2：根據 targetArray 更新馬達輸出 ====
-  static portMUX_TYPE encoder_mux = portMUX_INITIALIZER_UNLOCKED;
   for (int i = 0; i < 3; ++i)
   {
-    int pos = 0;
-    // 最佳且高效的方案：暫時鎖住中斷
-    portENTER_CRITICAL(&encoder_mux);
-    pos = encoders[i].getPosition();
-    encoders[i].reset();
-    portEXIT_CRITICAL(&encoder_mux);
-    // 更新累積位置 (posiArray[i])
-    if (pos != 0)
-    {
-      posiArray[i] += pos;
-    }
-
-    // ========= motion判斷 =========
-    static unsigned long lastMoveTime[3] = {0, 0, 0};
-    if (pos != 0)
-    {
-      // 有動 → 更新「上次有動的時間」
-      lastMoveTime[i] = now;
-      motion[i] = true;
-    }
-    else
-    {
-      // 沒動 → 若距離上次動過超過 40ms 才判斷為靜止
-      if (now - lastMoveTime[i] > 40)
-      {
-        motion[i] = false;
-      }
-      else
-      {
-        motion[i] = true; // 暫時保持動的狀態
-      }
-    }
-
-    // 更新PID馬達輸出
-    Pid::DiPo statuses = motors[i].DirAndPwr(targetArray[i], posiArray[i], kp, ki, kd);
+    Pid::DiPo statuses = motors[i].DirAndPwr(targetArray[i], currentPosiArray[i], kp, ki, kd);
     int direction = statuses.D;
     int rawPower = statuses.P;
 
@@ -366,15 +342,4 @@ void loop()
     // 移動馬達
     setMotor(i, finalPower, direction > 0);
   }
-
-  // 判斷 anyMotion 並檢測改變
-  bool newAnyMotion = !(motion[0] == false && motion[1] == false && motion[2] == false);
-  if (newAnyMotion != lastAnyMotion)
-  {
-    lastAnyMotionChangeTime = currentMillis;
-    lastAnyMotion = newAnyMotion;
-    // Serial.print("Motion changed -> ");
-    // Serial.println(newAnyMotion ? "True" : "False");
-  }
-  anyMotion = newAnyMotion;
 }
