@@ -79,6 +79,12 @@ unsigned long capa;
 unsigned long previousCapaClose = 0; // 上次讀取的 capa 值
 unsigned long proxThresh;
 
+// ==== 連續觸摸判定追蹤變數 ====
+static int consecutiveCount = 0;
+static unsigned long comparisonBaseCapa = 0; // 首次觸發時的基值
+static bool baseCapaSet = false;             // 是否已設定基值
+const int REQUIRED_CONSECUTIVE = 5;          // 所需的連續次數
+
 // 全域變數（放在 loop 外面）
 static unsigned long lastPrintValue = 0; // 上次印出的 capa 值
 static const int PRINT_THRESHOLD = 5;    // 變化 > 5 才印（可調）
@@ -152,18 +158,23 @@ unsigned long readFiltered()
   // unsigned long m = median5(clamped);
   unsigned long m = median5(raw);
   unsigned long y = emaFilter(m);
-  // return y;
-  return raw;
+  // return m;
+  return y;
+  //  return raw;
 }
+
 // === 觸摸智慧列印函式snprintf ===
 void handleTouchDetection(unsigned long currentMillis, int approachThresh, int leaveThresh)
 {
-  // if (currentMillis - lastReadTimeClose < 40)
-  if (currentMillis - lastReadTimeClose < 17)
-
+  // if (currentMillis - lastReadTimeClose < 17)
+  if (currentMillis - lastReadTimeClose < 40)
     return;
 
+  capa = capsense.getReading28(2); // Read CH2
+  // 如果需要濾波，請改用: capa = readFiltered();
+
   long diff = (long)capa - (long)previousCapaClose;
+  // 雜訊過濾
   if (abs(diff) < 10)
   {
     previousCapaClose = capa;
@@ -171,30 +182,69 @@ void handleTouchDetection(unsigned long currentMillis, int approachThresh, int l
     return;
   }
 
-  const char *event = "";
-  if (diff <= -approachThresh)
+  // 判斷是否「接近」的條件
+  if ((long)capa - (long)comparisonBaseCapa <= -approachThresh)
   {
-    proxThresh = capa;
-    ledcWrite(ledPwmChannel, 255);
-    event = "接近";
+    // A. 第一次滿足條件：設定比較基值，並開始計數
+    if (!baseCapaSet)
+    {
+      comparisonBaseCapa = capa; // ✨ 修正點 1：記錄當前低點作為連續判定的基準
+      baseCapaSet = true;
+      consecutiveCount = 1;
+    }
+    // B. 非第一次滿足條件：增加計數
+    else
+    {
+      consecutiveCount++;
+    }
+
+    // C. 檢查是否達到連續次數 (假設 REQUIRED_CONSECUTIVE = 5)
+    if (consecutiveCount >= REQUIRED_CONSECUTIVE)
+    {
+      // *** 判斷為「接近」的動作 ***
+      proxThresh = capa; // 新的 proxThresh (用於「離開」判定)
+      ledcWrite(ledPwmChannel, 255);
+      const char *event = "接近";
+      // 觸發智慧列印
+      snprintf(logBuffer, sizeof(logBuffer), "[%s] capa: %5lu | diff: %+5ld | %s → LED %s (連續 %d 次)\n",
+               modeStr, capa, (long)capa - (long)comparisonBaseCapa,
+               event,
+               ledcRead(ledPwmChannel) ? "ON" : "OFF",
+               consecutiveCount);
+      Serial.println(logBuffer);
+      lastPrintValue = capa;
+
+      // 重設判定狀態
+      consecutiveCount = 0;
+      baseCapaSet = false;
+    }
   }
-  else if (capa - proxThresh >= leaveThresh)
+  // 3. 不滿足「接近」條件或「離開」
+  else
   {
-    ledcWrite(ledPwmChannel, 0);
-    event = "離開";
+    // 判斷為「離開」的動作
+    if (capa - proxThresh >= leaveThresh)
+    {
+      comparisonBaseCapa = capa; // 在這裡設定/更新新的基值
+      ledcWrite(ledPwmChannel, 0);
+      const char *event = "離開";
+      // 觸發智慧列印
+      snprintf(logBuffer, sizeof(logBuffer), "[%s] capa: %5lu | diff: %+5ld | %s → LED %s\n",
+               modeStr, capa, (long)capa - (long)proxThresh,
+               event,
+               ledcRead(ledPwmChannel) ? "ON" : "OFF");
+      Serial.println(logBuffer);
+      lastPrintValue = capa;
+    }
+
+    // 歸零連續計數並重設基值旗標 (不滿足接近條件時)
+    consecutiveCount = 0;
+    baseCapaSet = false;
   }
 
-  // 智慧列印
-  //  if (event[0] || abs((long)capa - (long)lastPrintValue) > PRINT_THRESHOLD)
-  //  {
-  //    snprintf(logBuffer, sizeof(logBuffer), "[%s] capa: %5lu | diff: %+5ld | %s → LED %s\n",
-  //             modeStr, capa, diff,
-  //             event[0] ? event : "    ",
-  //             ledcRead(ledPwmChannel) ? "ON" : "OFF");
-  //    Serial.println(logBuffer);
-  //    lastPrintValue = capa;
-  //  }
+  // --- 連續判定邏輯結束 ---
 
+  // 更新 tracking 變數 (保持在函式尾部)
   previousCapaClose = capa;
   lastReadTimeClose = currentMillis;
 }
@@ -215,9 +265,13 @@ void setup()
   {
     delay(50); // Wait for sensor stabilization
     // proxThresh = capsense.getReading28(2);
-    proxThresh = readFiltered();
-    Serial.print("Initial proxThresh: ");
-    Serial.println(proxThresh);
+    // proxThresh = readFiltered();
+    // Serial.print("Initial proxThresh: ");
+    // Serial.println(proxThresh);
+
+    comparisonBaseCapa = readFiltered();
+    Serial.print("Initial comparisonBaseCapa: ");
+    Serial.println(comparisonBaseCapa);
   }
   else
     Serial.println("FDC2214 Sensor Fail");
@@ -260,14 +314,15 @@ void loop()
 
   static unsigned long previousMillis = 0; // 上次讀取的時間
   unsigned long currentMillis = millis();  // 當前時間
-  // 讀取電容值
-  if (currentMillis - previousMillis >= 40)
-  {
-    // capaRaw = capsense.getReading28(2); // Read CH2
-    capa = readFiltered();
-    // Serial.println(capaRaw);        // Output single value
-    previousMillis = currentMillis; // 更新上次讀取時間
-  }
+  // // 讀取電容值
+  // if (currentMillis - previousMillis >= 40)
+  // {
+  //   capa = capsense.getReading28(2); // Read CH2
+  //   // capa = readFiltered();
+  //   Serial.println(capa);        // Output single value
+  //   previousMillis = currentMillis; // 更新上次讀取時間
+  // }
+
   // === 觸摸判斷主邏輯 ===
   MotionStatus status = motorMonitor.getMotionStatus();
   if (status.isAnyMotion == false && (currentMillis - status.lastChangeTime) >= 50)
@@ -278,7 +333,7 @@ void loop()
   else if (status.isAnyMotion == true && (currentMillis - status.lastChangeTime) >= 50)
   {
     modeStr = "MOVING";
-    handleTouchDetection(currentMillis, 300, 300); // 移動：接近 -300，離開 +300
+    handleTouchDetection(currentMillis, 200, 200); // 移動：接近 -300，離開 +300
   }
 
   // ==== ✨ 階段1：先計算三顆的「下一步候選值 planned[]」(不直接動 targetArray) ====
@@ -292,7 +347,7 @@ void loop()
   }
   else // OSC 模式
   {
-    // motionAuto.resetAllRandomEffects();
+    motionAuto.resetAllRandomEffects();
     for (int i = 0; i < 3; ++i)
     {
       planned[i] = osc.getTarget(i);
