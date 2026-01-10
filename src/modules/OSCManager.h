@@ -14,9 +14,14 @@ public:
     int getTarget(int motor) const;    // 取得 OSC 目標
     void sendStatus(const int pos[3]); // 發送位置（可選）
 
+    int getPwmValue() const { return pwmValue; }
+
 private:
     WiFiUDP udp;
     int oscTargets[3] = {0, 0, 0}; // 最新目標
+    int pwmValue = 0;
+
+    void handlePwm(OSCMessage &msg);
 
     void handleMotorTarget(OSCMessage &msg, int idx);
 

@@ -51,7 +51,21 @@ void OSCManager::update()
             msg.route("/motor3Target",
                       std::bind(&OSCManager::handleMotorTarget, this, _1, 2));
             // 可加 /P /I /D
+            msg.route("/pwm", std::bind(&OSCManager::handlePwm, this, std::placeholders::_1));
         }
+    }
+}
+
+void OSCManager::handlePwm(OSCMessage &msg)
+{
+    if (msg.isInt(0))
+    {
+        pwmValue = constrain(msg.getInt(0), 0, 255);
+    }
+    else if (msg.isFloat(0))
+    {
+        // 有些軟體會送 0.0~1.0 的 float，保險起見也處理一下
+        pwmValue = constrain((int)(msg.getFloat(0)), 0, 255);
     }
 }
 
